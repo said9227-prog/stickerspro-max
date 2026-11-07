@@ -77,7 +77,8 @@ object WastickersMimeTypes {
     /**
      * .wastickers has NO registered MIME type anywhere. Restricting the picker
      * to "application/zip" or any specific type would HIDE exactly the files
-     * the user needs, so every picker uses */* and the extension rule decides.
+     * the user needs, so every picker uses a wildcard and the extension rule
+     * decides.
      */
     const val ANY = "*/*"
 
