@@ -1,0 +1,156 @@
+================================================================================
+WASTICKERS_INITIAL_INSPECTION_REPORT
+الفحص الإلزامي — المرحلة 1
+Project: All Stickers  |  Target: StickersPro Max
+Source: /root/projects/gooh/all-stickers-comprehensive-audit.zip
+Date: inspection phase
+================================================================================
+
+0. حالة المشروع قبل الفحص
+--------------------------------------------------------------------------------
+الملف الوحيد الموجود في /root/projects/gooh كان:
+  all-stickers-comprehensive-audit.zip (7,063,277 bytes)
+
+لا يوجد مستودع Git مسبقاً (fatal: not a git repository)، لا Git history، لا remotes.
+لا يوجد local.properties، لا keystore، لا .env فعلي (فقط .env.example بلا مفاتيح).
+نسخة احتياطية كاملة أُنشئت في:
+  /root/backups/all-stickers-comprehensive-audit.ORIGINAL.zip
+  MD5: 256c3870a2d06668933b69cb6a1d4d3d (مطابق للأصل — لم تُعدّل)
+تم استخراج المشروع في: /root/projects/gooh/project
+
+ملاحظة حرجة على الكود الحالي: التعليقات داخل الملفات تدّعي إصلاحات
+("ROOT CAUSE FIX", "root-cause fix") بينما التنفيذ الفعلي ناقص. لم يُعتمد على
+التعليقات كدليل، بل على التنفيذ والبحث في الكود فقط.
+
+1. تتبع دورة الملف: أين تنكسر؟
+--------------------------------------------------------------------------------
+الوجود في الهاتف → الاكتشاف → الوصول → القراءة → التحقق → الظهور → الفتح → الاستيراد
+
+المرحلة 1 (الاكتشاف) تعمل جزئياً.
+المرحلة 2 (الوصول الافتراضي لمجلد Download) معطلة تماماً.
+بقية المراحل تعمل متى وُصل URI صالح يدوياً.
+
+2. الأخطاء الجذرية المثبتة بالأدلة
+--------------------------------------------------------------------------------
+[RC-1] لا يوجد مصدر Download افتراضي مطلقاً  ← السبب الجذري الأول
+  الدليل:
+    grep -rn "Download" app/src/main/java/com/example/wastickers/*.kt
+    → لا يوجد أي مسار/URI لمجلد Download في منطق الاكتشاف.
+    grep -rn "MediaStore.Downloads" app/src/main/java/  → 0 نتائج
+    MediaStore المستخدم هو MediaStore.Files فقط، وهو لا يُظهر ملفات
+    حزم أخرى على Android 13+.
+  الأثر: المستخدم يمنح الصلاحيات لكن قائمة الاكتشاف تبقى فارغة، تماماً كما
+  هو موصوف في المشكلة. لا شيء يحاول Download افتراضياً.
+
+[RC-2] لا وجود لأي وسيلة اكتشاف داخل واجهة المستخدم لعرض Download
+  الدليل: WastickersImportScreen.kt — الأفعال الوحيدة:
+    OpenDocumentTree()  و  OpenMultipleDocuments()
+    لا يوجد زر "Download" ولا مصدر افتراضي معروض ولا حالة لكل مصدر.
+
+[RC-3] OpenDocumentTree لا يمرر EXTRA_INITIAL_URI
+  الدليل:
+    WastickersImportScreen.kt:95  contract = ActivityResultContracts.OpenDocumentTree()
+    treeLauncher.launch(null)   ← null دائماً
+  الأثر: منتقي المجلدات يفتح دائماً على الجذر، فيضطر المستخدم للتنقل يدوياً
+  إلى Download. هذا هو "لا يستطيع اختيار مجلد Download بسهولة".
+
+[RC-4] takePersistableUriPermission لا يستخدم أعلام Intent الأصلية
+  الدليل:
+    WastickersImportViewModel.kt:316-319
+    WastickersImportViewModel.kt:342-345
+    كلا الموضعين يمرران Intent.FLAG_GRANT_READ_URI_PERMISSION ثابتاً
+    دون قراءة flags من Intent الناتج.
+  الأثر: بعض المزوّدين لا يمنحون grant دائم؛ أي أن URI قد يُحفظ كمصدر
+  "صالح" مع أنه غير قابل للقراءة بعد إعادة التشغيل.
+
+[RC-5] لا يوجد تحقق فعلي من persistedUriPermissions عند الحفظ
+  الدليل:
+    persistedUriPermissions يُستخدم في مكان واحد فقط (DeviceWastickersScanner:102)
+    ولا يُستخدم في onTreeUriGranted / onDocumentsSelected.
+  الأثر: يُحفظ URI في التفضيلات حتى لو فشل تثبيت الصلاحية الدائمة.
+  (مطلوب: لا تحفظ المصدر إن فشل التثبيت أو فشلت القراءة الفعلية.)
+
+[RC-6] لا يوجد تمييز بين حالات الوصول الست
+  المطلوب: GRANTED_AND_READABLE / GRANTED_BUT_UNREADABLE / TEMPORARY_ACCESS /
+            PERMISSION_REVOKED / PROVIDER_UNAVAILABLE / NOT_SELECTED
+  الواقع: WastickersPermission فيه 3 قيم فقط (GRANTED/NEEDS_ACCESS/DENIED)
+  ولا تُعرض حالة لكل مصدر.
+
+[RC-7] لا يوجد نظام تشخيص WastickersDiagnosticManager
+  الدليل: ls app/src/main/java/com/example/wastickers/ | grep -i diag → لا شيء
+  لا يوجد WASTICKERS_DIAGNOSTIC_REPORT.txt ولا تصدير/مشاركة تقرير.
+
+[RC-8] Download ليس مُخزّناً في DataStore كتفضيل
+  الدليل: app/build.gradle.kts:89 — datastore معطّل (معلّق).
+  لا يوجد أي تخزين لتفضيل المصدر الافتراضي.
+
+[RC-9] استثناءات تُبتلع بصمت
+  الدليل: DeviceWastickersScanner.scanMediaStore
+    catch (_: SecurityException) { /* ... */ }
+    catch (_: Exception) { /* ... */ }
+  الأخطاء لا تُسجّل ولا تظهر للمستخدم ولا في تقرير.
+
+[RC-10] لا توجد اختبارات لاختيار مجلد/ملفات متعددة/صلاحية دائمة حقيقية
+  الدليل: androidTest يحتوي 3 اختبارات فقط؛ لا اختبار MediaStore.Downloads،
+  لا اختبار إلغاء الصلاحية، لا اختبار مزود لا يستجيب، لا اختبار استيراد
+  على جهاز حقيقي.
+
+3. أخطاء إضافية مؤكدة (غير جذرية لكن يجب معالجتها)
+--------------------------------------------------------------------------------
+[EX-1] MediaStore لا يستخدم MediaStore.Downloads.EXTERNAL_CONTENT_URI
+       مع RELATIVE_PATH — لا يمكن تقييده على Download.
+[EX-2] أغلفة catch(_: Exception) في scanDirectDocuments تُسقط الاسم بصمت.
+[EX-3] لا يوجد حالة "لا توجد صلاحية قراءة" موضحفة كسبب مستقل في الواجهة.
+[EX-4] أزرار الواجهة لا تتضمن: تحديث/اختيار ملف/عدة ملفات/مجلد/تغيير المصدر
+       كمجموعة افعال واضحة + حالة كل مصدر.
+
+4. الملفات المتأثرة (تقديري)
+--------------------------------------------------------------------------------
+  app/src/main/java/com/example/wastickers/DeviceWastickersScanner.kt
+  app/src/main/java/com/example/wastickers/WastickersDiscoveryEngine.kt
+  app/src/main/java/com/example/wastickers/WastickersImportViewModel.kt
+  app/src/main/java/com/example/wastickers/WastickersImportScreen.kt
+  app/src/main/java/com/example/wastickers/WastickersStores.kt
+  app/src/main/java/com/example/wastickers/WastickersModels.kt
+  app/src/main/java/com/example/wastickers/WastickersArchiveValidator.kt (فحص فقط)
+  app/src/main/java/com/example/wastickers/WastickersImporter.kt (فحص فقط)
+  app/src/main/AndroidManifest.xml (فحص فقط — لن نضيف MANAGE_EXTERNAL_STORAGE)
+  app/build.gradle.kts (لا تغيير — DataStore سيُنفّذ عبر SharedPreferences
+                        لتجنّب كسر الاعتماديات الحالية)
+  + ملفات جديدة: WastickersDiagnosticManager.kt, WastickersAccessState.kt,
+                 WastickersSourceConfig.kt, اختبارات جديدة
+  + res/values*/strings.xml (نصوص جديدة)
+  + .github/workflows/build-apk.yml (تحسين/إضافة)
+
+5. خطة الإصلاح (بالترتيب)
+--------------------------------------------------------------------------------
+  P1  طبقة حالة الوصول WastickersAccessState (6 حالات) لكل مصدر.
+  P2  WastickersSourcesRegistry: Download (default), SAF tree, direct docs,
+      MediaStore — كل مصدر يُفحص مستقلاً داخل try/catch خاص.
+  P3  Download كافتراضي: MediaStore.Downloads + RELATIVE_PATH LIKE 'Download%'
+      (API 29+) و MediaStore.Files fallback (API ≤ 32) + SAF tree إن وُجد،
+      مع تفضيل محفوظ (SharedPreferences) يُقرأ في أول تشغيل.
+  P4  تصحيح onTreeUriGranted/onDocumentsSelected:
+      قراءة flags من Intent، takePersistableUriPermission، التحقق من
+      persistedUriPermissions، اختبار قراءة فعلي، فقط عندها يُحفظ المصدر.
+  P5  OpenDocumentTree مع EXTRA_INITIAL_URI لمجلد Download عبر StartsActivityForResult.
+  P6  WastickersDiagnosticManager + WASTICKERS_DIAGNOSTIC_REPORT.txt + مشاركة.
+  P7  واجهة Discover: مصدر افتراضي، تحديث، اختيار ملف/عدة ملفات/مجلد،
+      تغيير المصدر، حالة كل مصدر، أسباب فشل مفصلة.
+  P8  اختبارات وحدة جديدة + اختبارات androidTest (تُشغّل على جهاز/emu فقط؛
+      وإلا تُسجّل NOT VERIFIED).
+  P9  بناء + GitHub Actions + ZIP + تقرير نهائي.
+
+6. قرارات تصميم ملزمة
+--------------------------------------------------------------------------------
+  - لا MANAGE_EXTERNAL_STORAGE.
+  - لا تحويل content:// إلى File path.
+  - لا تغيير applicationId (com.aistudio.stickerconv.w2tg) أو namespace (com.example).
+  - لا تغيير signingConfig.
+  - لا حذف أي ميزة أو اختبار قائم.
+  - استخراج Download عبر MediaStore.Downloads (API 29+) أو MediaStore.Files
+    (API ≤ 32) أو SAF tree فقط — لا خداع بأن SAF grant يغطي Download بغير منح المستخدم.
+
+================================================================================
+انتهى تقرير الفحص الأولي. البدء في التنفيذ.
+================================================================================
