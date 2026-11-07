@@ -684,6 +684,7 @@ private fun downloadTreeUri(): Uri? = try {
     null
 }
 
+@Composable
 private fun DiscoveryStatusBanners(state: WastickersUiState) {
     val noticeColor = MaterialTheme.colorScheme.errorContainer
     val onNotice = MaterialTheme.colorScheme.onErrorContainer
