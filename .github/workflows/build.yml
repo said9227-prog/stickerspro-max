@@ -104,9 +104,21 @@ jobs:
           echo "BUILDING DEBUG APK"
           echo "============================================================"
 
-          gradle :app:assembleDebug \
-            --stacktrace \
-            --no-daemon
+          # Transient 504s from Maven/GitHub release mirrors are retried here:
+          # the build is idempotent, so retrying is safe and does not mask a
+          # real compile error (which fails every attempt and is shown).
+          attempt=1
+          max_attempts=3
+          until gradle :app:assembleDebug --stacktrace --no-daemon; do
+            status=$?
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Build failed after $attempt attempts."
+              exit $status
+            fi
+            attempt=$((attempt + 1))
+            echo "Attempt $attempt of $max_attempts (previous exit $status)..."
+            sleep $((attempt * 20))
+          done
 
           echo ""
           echo "Gradle build completed successfully."
