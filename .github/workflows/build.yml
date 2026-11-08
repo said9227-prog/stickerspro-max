@@ -71,10 +71,43 @@ jobs:
       # ============================================================
       # 4. Setup Gradle
       # ============================================================
+      # The Gradle cache service on GitHub-hosted runners intermittently
+      # responds 504. A cache miss must NOT fail the build, so this step is
+      # allowed to fail and the build falls back to a plain Gradle invocation.
       - name: Setup Gradle
+        id: setup_gradle
+        continue-on-error: true
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '9.3.1'
+          cache-disabled: false
+          dependency-graph: disabled
+          # Develocity injection also calls a remote service and was seen
+          # returning 504 on the hosted runners; the build does not need it.
+          develocity-injection-enabled: false
+
+      # Guarantees a usable Gradle 9.3.1 even when the cache action fails.
+      - name: Ensure Gradle 9.3.1 is available
+        shell: bash
+        run: |
+          set -e
+          if command -v gradle >/dev/null 2>&1 && gradle --version | grep -q "9\.3\.1"; then
+            echo "Gradle already available: $(gradle --version | grep Gradle)"
+            exit 0
+          fi
+          echo "Installing Gradle 9.3.1 fallback distribution..."
+          GRADLE_ZIP=/tmp/gradle-9.3.1-bin.zip
+          for attempt in 1 2 3; do
+            if curl -fsSL --retry 3 --retry-delay 5 -o "$GRADLE_ZIP" \
+              https://services.gradle.org/distributions/gradle-9.3.1-bin.zip; then
+              break
+            fi
+            echo "Gradle download attempt $attempt failed"
+            sleep 10
+          done
+          unzip -q -o "$GRADLE_ZIP" -d /opt
+          echo "/opt/gradle-9.3.1/bin" >> "$GITHUB_PATH"
+          /opt/gradle-9.3.1/bin/gradle --version
 
       # ============================================================
       # 5. Verify Gradle wrapper
