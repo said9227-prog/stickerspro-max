@@ -162,4 +162,33 @@
     <string name="wst_reason_scan_failed_hint">حدث خطأ أثناء الفحص. راجع تقرير التشخيص للمزيد من التفاصيل.</string>
 
     <string name="wst_pick_single_file">اختيار ملف واحد</string>
+
+    <!-- WASTICKERS Explorer redesign + direct storage -->
+    <string name="exp_header_count">%1$d حزمة</string>
+    <string name="exp_scanning">جارٍ الفحص…</string>
+    <string name="exp_parsing">جارٍ قراءة الحزم…</string>
+    <string name="exp_ready">جاهز</string>
+    <string name="exp_need_permission">بحاجة إلى صلاحية</string>
+    <string name="exp_perm_ok">الصلاحية متاحة</string>
+    <string name="exp_perm_missing">الصلاحية مطلوبة</string>
+    <string name="exp_perm_unsupported">غير مدعومة</string>
+    <string name="exp_filters">بحث وتصفية</string>
+    <string name="exp_filter_all">الكل</string>
+    <string name="exp_filter_static">ثابتة</string>
+    <string name="exp_filter_animated">متحركة</string>
+    <string name="exp_filter_ready">جاهزة للاستيراد</string>
+    <string name="exp_filter_empty">لا حزم تطابق التصفية</string>
+    <string name="exp_filter_empty_hint">غيّر التصفية أو امسح البحث لعرض كل الحزم.</string>
+    <string name="exp_sort_newest">الأحدث</string>
+    <string name="exp_sort_name">الاسم</string>
+    <string name="exp_sort_size">الحجم</string>
+    <string name="exp_sort_count">عدد الملصقات</string>
+    <string name="exp_type_mixed">مختلطة</string>
+    <string name="exp_partial_access">تعذر الوصول إلى %1$d مجلد — تم فحص بقية المجلدات.</string>
+    <string name="exp_reading_packages">جارٍ قراءة الحزم وإنشاء المعاينات…</string>
+    <string name="exp_permission_required">صلاحية الوصول إلى الملفات مطلوبة</string>
+    <string name="exp_permission_hint">لمنح التطبيق الوصول إلى كل الملفات (MANAGE_EXTERNAL_STORAGE) ليعرض حزم .wastickers تلقائياً. بدونها استخدم اختيار مجلد أو ملفات.</string>
+    <string name="exp_open_settings">فتح إعدادات الصلاحية</string>
+    <string name="exp_scanned_count">تم فحص %1$d ملف حتى الآن</string>
+    <string name="exp_state_no_manage">MANAGE_EXTERNAL_STORAGE غير ممنوحة</string>
 </resources>

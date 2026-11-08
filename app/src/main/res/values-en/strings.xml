@@ -103,4 +103,33 @@
     <string name="wst_reason_scan_failed_hint">An error occurred while scanning. See the diagnostic report for details.</string>
 
     <string name="wst_pick_single_file">Pick a single file</string>
+
+    <!-- WASTICKERS Explorer redesign + direct storage -->
+    <string name="exp_header_count">%1$d packs</string>
+    <string name="exp_scanning">Scanning…</string>
+    <string name="exp_parsing">Reading packs…</string>
+    <string name="exp_ready">Ready</string>
+    <string name="exp_need_permission">Permission needed</string>
+    <string name="exp_perm_ok">Access granted</string>
+    <string name="exp_perm_missing">Permission required</string>
+    <string name="exp_perm_unsupported">Unsupported</string>
+    <string name="exp_filters">Search &amp; filter</string>
+    <string name="exp_filter_all">All</string>
+    <string name="exp_filter_static">Static</string>
+    <string name="exp_filter_animated">Animated</string>
+    <string name="exp_filter_ready">Ready to import</string>
+    <string name="exp_filter_empty">No packs match the filter</string>
+    <string name="exp_filter_empty_hint">Change the filter or clear the search to see all packs.</string>
+    <string name="exp_sort_newest">Newest</string>
+    <string name="exp_sort_name">Name</string>
+    <string name="exp_sort_size">Size</string>
+    <string name="exp_sort_count">Sticker count</string>
+    <string name="exp_type_mixed">Mixed</string>
+    <string name="exp_partial_access">%1$d folder(s) could not be accessed — the rest were scanned.</string>
+    <string name="exp_reading_packages">Reading packs and building previews…</string>
+    <string name="exp_permission_required">Storage access permission required</string>
+    <string name="exp_permission_hint">Grant all-files access (MANAGE_EXTERNAL_STORAGE) so the app can list .wastickers packs automatically. Without it, pick a folder or files manually.</string>
+    <string name="exp_open_settings">Open permission settings</string>
+    <string name="exp_scanned_count">%1$d files scanned so far</string>
+    <string name="exp_state_no_manage">MANAGE_EXTERNAL_STORAGE not granted</string>
 </resources>

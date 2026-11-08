@@ -88,6 +88,60 @@ class WastickersDiagnosticManager(private val context: Context) {
             }
             builder.appendLine()
 
+            // ---- Direct File Access / all-files permission (real values) ----
+            builder.appendLine("[Storage permission]")
+            val perm = scan.permission
+            builder.appendLine("MANAGE_EXTERNAL_STORAGE : ${
+                perm?.state ?: StoragePermissionState.UNSUPPORTED
+            }")
+            builder.appendLine("SDK                     : ${perm?.sdkInt ?: Build.VERSION.SDK_INT}")
+            builder.appendLine("Probed root             : ${perm?.probedRoot ?: "-"}")
+            builder.appendLine("Read verified           : ${perm?.readVerified ?: false}")
+            if (perm?.detail != null) {
+                builder.appendLine("Detail                  : ${perm.detail}")
+            }
+            builder.appendLine()
+
+            scan.directDiagnostics?.let { dd ->
+                builder.appendLine("[Direct File Access]")
+                builder.appendLine("Roots scanned   : ${dd.rootsScanned.size}")
+                dd.rootsScanned.take(10).forEach { builder.appendLine("  root: $it") }
+                builder.appendLine("Dirs examined   : ${dd.dirsExamined}")
+                builder.appendLine("Files examined  : ${dd.filesExamined}")
+                builder.appendLine("Files matched   : ${dd.filesMatched}")
+                builder.appendLine("Depth limit     : ${dd.depthLimit}")
+                builder.appendLine("Truncated       : ${dd.truncated}")
+                builder.appendLine("Duration        : ${dd.durationMs} ms")
+                builder.appendLine("Folders probed  : ${dd.folders.size}")
+                val ok = dd.folders.count { it.result == FolderProbeResult.OK }
+                val missing = dd.folders.count { it.result == FolderProbeResult.MISSING }
+                val denied = dd.folders.count { it.result == FolderProbeResult.DENIED }
+                val err = dd.folders.count { it.result == FolderProbeResult.ERROR }
+                builder.appendLine("  OK=$ok EMPTY/MISSING=$missing DENIED=$denied ERROR=$err")
+                builder.appendLine()
+                builder.appendLine("[Folders that could NOT be read]")
+                val bad = dd.deniedFolders
+                if (bad.isEmpty()) {
+                    builder.appendLine("(none)")
+                } else {
+                    bad.take(40).forEach { f ->
+                        builder.appendLine(" - ${f.result} ${f.path} ${f.error ?: ""}")
+                    }
+                }
+                builder.appendLine()
+            }
+
+            // Distinguish an EMPTY folder from one that could not be accessed.
+            // Both used to look like "no files"; they are different facts.
+            builder.appendLine("[Empty vs denied]")
+            scan.directDiagnostics?.folders
+                ?.filter { it.result == FolderProbeResult.OK && it.wastickersSeen == 0 }
+                ?.take(15)
+                ?.forEach {
+                    builder.appendLine(" EMPTY-no-wst ${it.path} (files=${it.filesSeen}, dirs=${it.dirsSeen})")
+                }
+            builder.appendLine()
+
             builder.appendLine("[Sources]")
             if (scan.sources.isEmpty()) {
                 builder.appendLine("(no source was probed)")

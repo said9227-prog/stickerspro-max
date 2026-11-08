@@ -68,7 +68,24 @@ data class WastickersUiState(
     /** The persisted default source kind. */
     val defaultSource: WastickersSourceKind = WastickersSourceKind.DOWNLOAD,
     /** True while a permission/scan toast should be shown. */
-    val notice: String? = null
+    val notice: String? = null,
+
+    /* ---------------- WASTICKERS Explorer state ---------------- */
+    /** Every discovered package with real previews + parsed metadata. */
+    val packages: List<ExplorerPackage> = emptyList(),
+    /** Packages after search/filter/sort (this is what the gallery renders). */
+    val visiblePackages: List<ExplorerPackage> = emptyList(),
+    val filter: ExplorerFilter = ExplorerFilter.ALL,
+    val sort: ExplorerSort = ExplorerSort.NEWEST,
+    /** REAL all-files permission snapshot (never assumed). */
+    val storagePermission: StoragePermissionState = StoragePermissionState.DENIED,
+    val storagePermissionDetail: String? = null,
+    /** Per-folder diagnostics from Direct File Access. */
+    val directDiagnostics: AdvancedDiagnostics? = null,
+    /** Files discovered so far during the running scan (live progress). */
+    val scannedCount: Int = 0,
+    /** True while packages are still being parsed/previewed. */
+    val isParsing: Boolean = false
 )
 
 @OptIn(FlowPreview::class) // Flow.debounce is still a FlowPreview API
@@ -87,6 +104,8 @@ class WastickersImportViewModel(application: Application) : AndroidViewModel(app
     private val documentStore = DocumentPermissionStore(app)
     private val defaultSourceStore = WastickersDefaultSourceStore(app)
     val diagnostics = WastickersDiagnosticManager(app)
+    private val permissionManager = StoragePermissionManager(app)
+    val storagePermissionManager: StoragePermissionManager get() = permissionManager
     private val scanner: DeviceWastickersScanner =
         DeviceWastickersScanner(app, treeStore, documentStore, defaultSourceStore = defaultSourceStore)
 
@@ -108,6 +127,7 @@ class WastickersImportViewModel(application: Application) : AndroidViewModel(app
         File(app.cacheDir, "wastickers_previews").apply { mkdirs() }
     }
     private var inspectionJob: Job? = null
+    private var parseJob: Job? = null
 
     init {
         // The normalised index is built ONCE per list change (on a background
@@ -304,12 +324,18 @@ class WastickersImportViewModel(application: Application) : AndroidViewModel(app
                         sources = result.sources,
                         emptyReason = computeEmptyReason(result, ordered),
                         defaultSource = defaultSourceStore.current(),
+                        storagePermission = result.permission?.state
+                            ?: permissionManager.check().state,
+                        storagePermissionDetail = result.permission?.detail,
+                        directDiagnostics = result.directDiagnostics,
+                        scannedCount = ordered.size,
                         notice = result.sources
                             .firstOrNull { it.state == WastickersAccessState.PERMISSION_REVOKED }
                             ?.detail
                     )
                 }
                 inspectVisible(ordered)
+                buildPackages(ordered)
             } catch (e: SecurityException) {
                 _uiState.update {
                     it.copy(
@@ -330,6 +356,176 @@ class WastickersImportViewModel(application: Application) : AndroidViewModel(app
             }
         }
     }
+
+    /* ------------------------------------------------------------------ */
+    /* WASTICKERS Explorer: parsing, previews, filtering, permission       */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Parses each discovered archive ONCE and writes its real previews to the
+     * cache, then publishes [ExplorerPackage] cards.
+     *
+     * Runs on Dispatchers.IO, is cancellable, and never blocks the UI thread.
+     * Preview images are bounded (MAX_PREVIEWS per package, 512 KB each) so a
+     * large gallery cannot exhaust memory.
+     */
+    private fun buildPackages(files: List<WastickersFile>) {
+        parseJob?.cancel()
+        parseJob = viewModelScope.launch {
+            _uiState.update { it.copy(isParsing = files.isNotEmpty()) }
+            val built = withContext(Dispatchers.IO) {
+                val result = ArrayList<ExplorerPackage>(files.size)
+                for (file in files) {
+                    if (!isActive) break
+                    val info = parsePackage(file)
+                    val keys = writePreviews(file, info)
+                    val existing = _uiState.value.files.firstOrNull { it.id == file.id }
+                    result.add(
+                        ExplorerPackage(
+                            id = file.id,
+                            displayName = file.displayName,
+                            packName = info.packName,
+                            author = info.author,
+                            sizeBytes = file.sizeBytes,
+                            lastModified = file.lastModified,
+                            source = file.source,
+                            location = file.location,
+                            stickerCount = info.stickerCount,
+                            stickerType = info.stickerType,
+                            kind = info.kind,
+                            previewKeys = keys,
+                            reason = info.reason,
+                            isNew = file.isNew,
+                            status = existing?.status ?: file.status,
+                            file = file
+                        )
+                    )
+                }
+                result
+            }
+            _uiState.update { state ->
+                state.copy(
+                    packages = built,
+                    isParsing = false,
+                    visiblePackages = ExplorerQuery.apply(
+                        built, state.query, state.filter, state.sort
+                    )
+                )
+            }
+        }
+    }
+
+    /** Parses via direct File when possible, else via the ContentResolver. */
+    private fun parsePackage(file: WastickersFile): WastickersPackageInfo {
+        val direct = directPathOf(file)
+        if (direct != null) {
+            val parsed = WastickersPackageParser.parseFile(direct, file.displayName)
+            if (parsed.kind != PackageKind.INVALID || !isContentUri(file.uri)) return parsed
+        }
+        return WastickersPackageParser.parseStream(file.displayName) {
+            try {
+                app.contentResolver.openInputStream(Uri.parse(file.uri))
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    /** Absolute path for DIRECT_FILE sources; null for content:// sources. */
+    private fun directPathOf(file: WastickersFile): File? {
+        if (file.source != WastickersSource.DIRECT_FILE) return null
+        if (file.uri.startsWith("file:")) {
+            return runCatching { File(java.net.URI(file.uri)) }.getOrNull()
+        }
+        return null
+    }
+
+    private fun isContentUri(uri: String): Boolean = uri.startsWith("content://")
+
+    /**
+     * Writes each real preview to the cache with a VERSIONED name so a reused
+     * card can never show another pack's image. Returns the cache keys.
+     */
+    private fun writePreviews(file: WastickersFile, info: WastickersPackageInfo): List<String> {
+        if (info.previews.isEmpty()) return emptyList()
+        val keys = ArrayList<String>(info.previews.size)
+        for (preview in info.previews) {
+            if (preview.bytes.isEmpty()) continue
+            val key = WastickersPreviewKeys.archivePreview(file, preview.entryName)
+            val ext = preview.entryName.substringAfterLast('.', "webp")
+                .lowercase(Locale.ROOT)
+                .filter { it.isLetterOrDigit() }
+                .take(6)
+                .ifBlank { "webp" }
+            val target = File(previewDir, "p_${Integer.toHexString(key.hashCode())}.$ext")
+            try {
+                if (!target.exists() || target.length() != preview.bytes.size.toLong()) {
+                    target.writeBytes(preview.bytes)
+                }
+                if (target.exists() && target.length() > 0) {
+                    keys.add(key)
+                }
+            } catch (_: Exception) {
+                // A preview that cannot be written is simply skipped; the card
+                // still renders with its metadata and the real count.
+            }
+        }
+        return keys
+    }
+
+    /** Resolves a preview key to a displayable file Uri (Coil-compatible). */
+    fun previewFileUri(key: String): String? {
+        val dir = previewDir.listFiles() ?: return null
+        val prefix = "p_${Integer.toHexString(key.hashCode())}."
+        return dir.firstOrNull { it.name.startsWith(prefix) }
+            ?.let { "file://${it.absolutePath}" }
+    }
+
+    fun setFilter(filter: ExplorerFilter) {
+        _uiState.update { state ->
+            state.copy(
+                filter = filter,
+                visiblePackages = ExplorerQuery.apply(
+                    state.packages, state.query, filter, state.sort
+                )
+            )
+        }
+    }
+
+    fun setSort(sort: ExplorerSort) {
+        _uiState.update { state ->
+            state.copy(
+                sort = sort,
+                visiblePackages = ExplorerQuery.apply(
+                    state.packages, state.query, state.filter, sort
+                )
+            )
+        }
+    }
+
+    /**
+     * Re-checks the all-files permission. MUST be called from onResume: opening
+     * the settings screen proves nothing, only this snapshot does.
+     */
+    fun refreshStoragePermission() {
+        viewModelScope.launch {
+            val snapshot = withContext(Dispatchers.IO) { permissionManager.check() }
+            _uiState.update {
+                it.copy(
+                    storagePermission = snapshot.state,
+                    storagePermissionDetail = snapshot.detail
+                )
+            }
+            if (snapshot.state == StoragePermissionState.GRANTED &&
+                _uiState.value.packages.isEmpty() && !_uiState.value.isLoading
+            ) {
+                refresh()
+            }
+        }
+    }
+
+    /** True when the platform has an "all files access" settings screen. */
+    fun manageStorageIntent(): android.content.Intent? = permissionManager.settingsIntent()
 
     /**
      * Explains WHY nothing is shown. Each cause maps to a different remedy, so
@@ -551,7 +747,14 @@ class WastickersImportViewModel(application: Application) : AndroidViewModel(app
         // The text field updates immediately; the debounced pipeline rebuilds
         // the visible list after SEARCH_DEBOUNCE_MS without touching storage.
         _query.value = query
-        _uiState.update { it.copy(query = query) }
+        _uiState.update { state ->
+            state.copy(
+                query = query,
+                visiblePackages = ExplorerQuery.apply(
+                    state.packages, query, state.filter, state.sort
+                )
+            )
+        }
     }
 
     /**
@@ -661,6 +864,7 @@ class WastickersImportViewModel(application: Application) : AndroidViewModel(app
         super.onCleared()
         importJob?.cancel()
         inspectionJob?.cancel()
+        parseJob?.cancel()
     }
 
     private companion object {

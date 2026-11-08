@@ -18,7 +18,11 @@ data class WastickersScanResult(
     /** Status of every source, in the order they were probed. */
     val sources: List<WastickersSourceStatus>,
     /** Diagnostics collected during this scan (never thrown away). */
-    val diagnostics: WastickersScanDiagnostics
+    val diagnostics: WastickersScanDiagnostics,
+    /** Per-folder diagnostics from Direct File Access (null when unavailable). */
+    val directDiagnostics: AdvancedDiagnostics? = null,
+    /** Real permission snapshot taken at the start of this scan. */
+    val permission: StoragePermissionSnapshot? = null
 )
 
 /**
@@ -84,7 +88,10 @@ class DeviceWastickersScanner(
     private val treePermissionStore: TreePermissionStore,
     private val documentPermissionStore: DocumentPermissionStore,
     private val engine: WastickersDiscoveryEngine = WastickersDiscoveryEngine(),
-    private val defaultSourceStore: WastickersDefaultSourceStore? = null
+    private val defaultSourceStore: WastickersDefaultSourceStore? = null,
+    private val permissionManager: StoragePermissionManager = StoragePermissionManager(context),
+    private val advancedEngine: AdvancedStorageDiscoveryEngine =
+        AdvancedStorageDiscoveryEngine(context, permissionManager)
 ) : WastickersDataSource {
 
     override suspend fun scan(): DiscoveryOutcome = scanDetailed().outcome
@@ -96,8 +103,63 @@ class DeviceWastickersScanner(
         val flat = ArrayList<WastickersFile>()
 
         val preferred = defaultSourceStore?.current() ?: WastickersSourceKind.DOWNLOAD
+        val permissionSnapshot = permissionManager.check()
 
-        /* ---------------- Source 1: Download (default) ------------------ */
+        /* ------- Source 1: Direct File Access (all-files granted) ------- */
+        // PRIMARY channel when MANAGE_EXTERNAL_STORAGE is granted: walks the
+        // real filesystem so files created by any app are visible.
+        var directDiagnostics: AdvancedDiagnostics? = null
+        var directCount = 0
+        if (permissionSnapshot.state == StoragePermissionState.GRANTED) {
+            try {
+                val direct = advancedEngine.discover()
+                directDiagnostics = direct.diagnostics
+                for (pkg in direct.packages) {
+                    val id = "file:${pkg.path}"
+                    if (flat.none { it.id == id }) {
+                        flat.add(
+                            WastickersFile(
+                                id = id,
+                                uri = java.io.File(pkg.path).toURI().toString(),
+                                displayName = pkg.displayName,
+                                sizeBytes = pkg.sizeBytes,
+                                lastModified = pkg.lastModified,
+                                source = WastickersSource.DIRECT_FILE,
+                                location = pkg.parentPath
+                            )
+                        )
+                        directCount++
+                    }
+                }
+                diagnostics.foldersScanned += direct.diagnostics.folders.size
+                diagnostics.nodesScanned += direct.diagnostics.dirsExamined.toInt()
+                direct.diagnostics.errors.take(MAX_DIRECT_ERRORS).forEach {
+                    diagnostics.recordError("DirectFile: $it")
+                }
+            } catch (e: Exception) {
+                diagnostics.recordError(
+                    "DirectFile scan failed: ${e::class.java.simpleName}: ${e.message}"
+                )
+            }
+        }
+        sources.add(
+            WastickersSourceStatus(
+                kind = WastickersSourceKind.DIRECT_FILE,
+                label = "التخزين المباشر",
+                state = when {
+                    permissionSnapshot.state != StoragePermissionState.GRANTED ->
+                        WastickersAccessState.NO_PERMISSION_MANAGE
+                    directDiagnostics == null ->
+                        WastickersAccessState.GRANTED_BUT_UNREADABLE
+                    else -> WastickersAccessState.GRANTED_AND_READABLE
+                },
+                filesFound = directCount,
+                detail = buildDirectDetail(permissionSnapshot, directDiagnostics),
+                isDefault = preferred == WastickersSourceKind.DIRECT_FILE
+            )
+        )
+
+        /* ---------------- Source 2: Download (default) ------------------ */
         val downloadProbe = probeDownload(flat, diagnostics)
         sources.add(
             WastickersSourceStatus(
@@ -203,7 +265,9 @@ class DeviceWastickersScanner(
         WastickersScanResult(
             outcome = normalized,
             sources = sources,
-            diagnostics = diagnostics.toDiagnostics()
+            diagnostics = diagnostics.toDiagnostics(),
+            directDiagnostics = directDiagnostics,
+            permission = permissionSnapshot
         )
     }
 
@@ -654,6 +718,24 @@ class DeviceWastickersScanner(
             documentId.takeLast(96)
     }
 
+    /** Human-readable summary of the direct-file channel. */
+    private fun buildDirectDetail(
+        snapshot: StoragePermissionSnapshot,
+        diagnostics: AdvancedDiagnostics?
+    ): String? {
+        if (snapshot.state != StoragePermissionState.GRANTED) {
+            return snapshot.detail ?: "صلاحية الوصول إلى كل الملفات غير ممنوحة"
+        }
+        if (diagnostics == null) return "تعذّر بدء الفحص المباشر"
+        val denied = diagnostics.deniedFolders.size
+        val parts = ArrayList<String>(3)
+        parts.add("${diagnostics.rootsScanned.size} جذر")
+        parts.add("${diagnostics.dirsExamined} مجلد")
+        if (denied > 0) parts.add("$denied مجلد غير قابل للقراءة")
+        if (diagnostics.truncated) parts.add("الفحص مقتطع (حد أقصى)")
+        return parts.joinToString(" · ")
+    }
+
     private fun describeTree(uri: Uri?): String {
         if (uri == null) return "مجلد مختار"
         val decoded = runCatching {
@@ -700,6 +782,7 @@ class DeviceWastickersScanner(
         const val MAX_DOCUMENTS = 5000
         const val MAX_MEDIA_ROWS = 20000
         const val MAX_ERRORS = 50
+        const val MAX_DIRECT_ERRORS = 10
 
         val CHILD_PROJECTION = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,

@@ -10,7 +10,9 @@ enum class WastickersSource {
     MEDIA_STORE,
     SAF_TREE,
     /** A document picked directly by the user through ACTION_OPEN_DOCUMENT. */
-    USER_DOCUMENT
+    USER_DOCUMENT,
+    /** Found by Direct File Access after MANAGE_EXTERNAL_STORAGE was granted. */
+    DIRECT_FILE
 }
 
 /** Lifecycle/status of a discovered archive. */

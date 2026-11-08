@@ -132,6 +132,7 @@ jobs:
             --tests com.example.WastickersImporterTest \
             --tests com.example.WastickersDiscoveryScenariosTest \
             --tests com.example.WastickersSourceStatusTest \
+            --tests com.example.WastickersExplorerTest \
             --stacktrace \
             --no-daemon
 

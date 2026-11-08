@@ -4,10 +4,22 @@
 
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Scoped read access for discovering .wastickers files through MediaStore
-         on Android 12L and below. On Android 13+ discovery relies exclusively
-         on the Storage Access Framework (user-selected directory trees).
-         No MANAGE_EXTERNAL_STORAGE / all-files access is requested. -->
+
+    <!--
+      MANAGE_EXTERNAL_STORAGE powers Direct File Access so .wastickers packs
+      written by ANY app (browser, WhatsApp, file manager) are discovered
+      automatically on Android 11+. It is requested on purpose for this
+      sticker-management use case and the user must grant it explicitly in
+      system settings; the app never assumes it was granted (it is verified
+      with Environment.isExternalStorageManager() and a real directory read).
+    -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
+    <!-- Scoped read access for the legacy model (API <= 29) and as a
+         supplement on API 30-32. On API 33+ discovery relies on Direct File
+         Access (MANAGE_EXTERNAL_STORAGE) and the Storage Access Framework. -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />

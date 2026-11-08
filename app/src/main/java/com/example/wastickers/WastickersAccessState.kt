@@ -19,11 +19,15 @@ enum class WastickersAccessState {
     /** The documents provider is missing or throws on every query. */
     PROVIDER_UNAVAILABLE,
     /** The user has not selected this source yet. */
-    NOT_SELECTED
+    NOT_SELECTED,
+    /** MANAGE_EXTERNAL_STORAGE (all-files access) is not granted. */
+    NO_PERMISSION_MANAGE
 }
 
 /** Kind of a discovery source shown on the WASTICKERS screen. */
 enum class WastickersSourceKind {
+    /** Direct File Access after MANAGE_EXTERNAL_STORAGE was granted. */
+    DIRECT_FILE,
     /** MediaStore.Downloads / MediaStore.Files — the default source. */
     DOWNLOAD,
     /** A SAF directory tree chosen with ACTION_OPEN_DOCUMENT_TREE. */
