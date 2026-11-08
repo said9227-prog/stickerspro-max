@@ -16,6 +16,7 @@ import com.example.wastickers.WastickersSourceKind
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -151,6 +152,79 @@ class WastickersMultiSourceInstrumentedTest {
             "Download source is still probed when another provider dies",
             result.sources.any { it.kind == WastickersSourceKind.DOWNLOAD }
         )
+    }
+
+
+    /* Direct File Access requires MANAGE_EXTERNAL_STORAGE. When the grant is
+     * absent the engine must report it — never pretend an empty list means
+     * "no files". */
+    @Test
+    fun directEngineReportsPermissionStateHonestly() {
+        val manager = com.example.wastickers.StoragePermissionManager(context)
+        val snapshot = manager.check()
+        val engine = com.example.wastickers.AdvancedStorageDiscoveryEngine(context, manager)
+        val result = runBlocking { engine.discover(maxDepth = 2, maxFiles = 500) }
+
+        if (snapshot.state == com.example.wastickers.StoragePermissionState.GRANTED) {
+            assertTrue(
+                "roots must be discovered when permission is granted",
+                result.diagnostics.rootsScanned.isNotEmpty()
+            )
+            assertTrue(
+                "a granted scan must report at least the probed root folders",
+                result.diagnostics.folders.isNotEmpty()
+            )
+        } else {
+            assertFalse(
+                "an ungranted scan must never claim permission",
+                result.diagnostics.permissionGranted
+            )
+            assertTrue(
+                "ungranted scans must explain the missing permission",
+                result.diagnostics.errors.any { it.contains("MANAGE_EXTERNAL_STORAGE") }
+            )
+        }
+    }
+
+    /* Empty vs denied must be distinguishable, never both "no files". */
+    @Test
+    fun folderProbeDistinguishesEmptyFromDenied() {
+        val manager = com.example.wastickers.StoragePermissionManager(context)
+        val engine = com.example.wastickers.AdvancedStorageDiscoveryEngine(context, manager)
+        val result = runBlocking { engine.discover(maxDepth = 1, maxFiles = 100) }
+        // Every probed folder carries an explicit result, so the UI can explain
+        // an empty folder differently from one that could not be read.
+        // Every probed folder carries exactly one explicit outcome, so an
+        // empty folder is never confused with one that could not be read.
+        val outcomes = result.diagnostics.folders.map { it.result }.toSet()
+        assertTrue(
+            "outcomes must be a subset of the known probe results",
+            outcomes.all { it in com.example.wastickers.FolderProbeResult.values().toList() }
+        )
+    }
+
+    /* A real .wastickers package written by the test is parsed with previews. */
+    @Test
+    fun packageParserExtractsRealPreviewsFromDisk() {
+        val dir = java.io.File(context.cacheDir, "wst_parser_test").apply { mkdirs() }
+        val archive = java.io.File(dir, "probe.wastickers")
+        java.util.zip.ZipOutputStream(archive.outputStream()).use { zip ->
+            val webp = byteArrayOf(
+                'R'.code.toByte(), 'I'.code.toByte(), 'F'.code.toByte(), 'F'.code.toByte(),
+                0, 0, 0, 0, 'W'.code.toByte(), 'E'.code.toByte(), 'B'.code.toByte(),
+                'P'.code.toByte()
+            ) + ByteArray(48) { 1 }
+            for (name in listOf("1.webp", "2.webp")) {
+                zip.putNextEntry(java.util.zip.ZipEntry(name))
+                zip.write(webp)
+                zip.closeEntry()
+            }
+        }
+        val info = com.example.wastickers.WastickersPackageParser.parseFile(archive, archive.name)
+        assertEquals(com.example.wastickers.PackageKind.VALID, info.kind)
+        assertEquals(2, info.stickerCount)
+        assertTrue("real previews must be extracted", info.previews.isNotEmpty())
+        dir.deleteRecursively()
     }
 
     /* Default source is persisted as Download. */

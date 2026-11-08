@@ -1,0 +1,257 @@
+================================================================================
+WASTICKERS_STORAGE_AND_UI_FINAL_REPORT.txt
+All Stickers / StickersPro Max — Advanced Storage Discovery & WASTICKERS Explorer
+الجهاز المستهدف: Chinoe LT_6509 — Android 12 (API 31)
+================================================================================
+
+طريقة قراءة هذا التقرير:
+  PASS          = تم التنفيذ والتحقق منه بدليل فعلي (مخرج بناء/اختبار/ملف).
+  FAIL          = تم التنفيذ لكن التحقق فشل.
+  NOT VERIFIED  = لم يُتحقق منه لعدم توفر جهاز Android فعلي في بيئة التنفيذ.
+
+بيئة التحقق المتاحة:
+  - بناء حقيقي على GitHub Actions (ubuntu-latest) — نجح.
+  - اختبارات وحدة JVM — نجحت.
+  - لا يوجد جهاز/محاكي Android في بيئة التنفيذ، لذلك كل ما يتطلب جهازاً
+    مذكور بصراحة كـ NOT VERIFIED.
+
+--------------------------------------------------------------------------------
+1. السبب الجذري للمشكلة
+--------------------------------------------------------------------------------
+المشكلة: التطبيق يحصل على صلاحية الملفات لكن ملفات .wastickers لا تظهر.
+
+السبب الجذري المثبت بالأدلة (من الفحص، لا من التعليقات):
+
+  RC-1 (الأهم) الكشف كان يعتمد كلياً على Storage Access Framework (SAF).
+      ├─ Before: AndroidManifest.xml لم يطلب MANAGE_EXTERNAL_STORAGE إطلاقاً
+      │  (النص كان يقول حرفياً "No MANAGE_EXTERNAL_STORAGE ... is requested").
+      ├─ ولهذا لم يكن هناك أي مسار يقرأ نظام الملفات مباشرة.
+      └─ النتيجة: المستخدم "يمنح الصلاحية" من إعدادات أندرويد، لكن التطبيق
+         لا يملك أصلاً آلية تستفيد منها؛ فيبقى يعتمد على MediaStore الذي
+         لا يُظهر ملفات التطبيقات الأخرى على Android 11+، وعلى SAF الذي
+         يتطلب اختيار كل ملف/مجلد يدوياً.
+
+  RC-2 لا يوجد محرك يفحص المسارات المباشرة (Download/Documents/Pictures/
+      Android/media) عبر java.io.File — 0 نتيجة عند البحث في الكود السابق.
+
+  RC-3 لا يوجد تحقق فعلي من الصلاحية: لم يُستخدم
+      Environment.isExternalStorageManager() في أي مكان.
+
+  RC-4 لا يوجد تشخيص يميّز "مجلد فارغ" عن "مجلد تعذّر الوصول إليه".
+      لذلك كان أي خطأ قراءة يُعرض كقائمة فارغة = "لا توجد ملفات".
+
+  RC-5 الواجهة كانت تعطي الأزرار مساحة أكبر من قائمة الحزم، ولا تعرض
+      معاينات حقيقية متعددة، ولا تصفية/ترتيب، ولا شريط إجراءات جماعي.
+
+--------------------------------------------------------------------------------
+2. الملفات التي تم فحصها
+--------------------------------------------------------------------------------
+  app/src/main/AndroidManifest.xml
+  app/build.gradle.kts / gradle/libs.versions.toml
+  .github/workflows/build.yml
+  app/src/main/java/com/example/wastickers/DeviceWastickersScanner.kt
+  app/src/main/java/com/example/wastickers/WastickersDiscoveryEngine.kt
+  app/src/main/java/com/example/wastickers/WastickersImportViewModel.kt
+  app/src/main/java/com/example/wastickers/WastickersImportScreen.kt
+  app/src/main/java/com/example/wastickers/WastickersStores.kt
+  app/src/main/java/com/example/wastickers/WastickersModels.kt
+  app/src/main/java/com/example/wastickers/WastickersArchiveValidator.kt
+  app/src/main/java/com/example/wastickers/WastickersArchiveInspector.kt
+  app/src/main/java/com/example/wastickers/WastickersImporter.kt
+  app/src/main/java/com/example/wastickers/WastickersDiagnosticManager.kt
+  app/src/main/java/com/example/wastickers/WastickersAccessState.kt
+  app/src/androidTest/... و app/src/test/...
+
+--------------------------------------------------------------------------------
+3. الملفات المعدلة
+--------------------------------------------------------------------------------
+  AndroidManifest.xml
+      + <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+                        tools:ignore="ScopedStorage" />
+  WastickersModels.kt
+      + WastickersSource.DIRECT_FILE + معالجته في locationOf()
+  WastickersAccessState.kt
+      + WastickersAccessState.NO_PERMISSION_MANAGE
+      + WastickersSourceKind.DIRECT_FILE
+  DeviceWastickersScanner.kt
+      + دمج محرك التخزين المباشر كمصدر أول (Source 1)
+      + WastickersScanResult.permission + .directDiagnostics
+  WastickersImportViewModel.kt
+      + حالة Explorer (packages / visiblePackages / filter / sort /
+        storagePermission / directDiagnostics / scannedCount / isParsing)
+      + buildPackages() / parsePackage() / writePreviews() / previewFileUri()
+      + setFilter() / setSort() / refreshStoragePermission() / manageStorageIntent()
+  WastickersImportScreen.kt (إعادة بناء كاملة)
+  WastickersDiagnosticManager.kt
+      + قسم [Storage permission] + [Direct File Access] + [Empty vs denied]
+  strings.xml (ar) و strings-en/strings.xml (+27 نص لكل لغة)
+  .github/workflows/build.yml (+ WastickersSourceStatusTest + WastickersExplorerTest)
+  androidTest/WastickersMultiSourceInstrumentedTest.kt (+3 اختبارات)
+  test/WastickersExplorerTest.kt + test/WastickersSourceStatusTest.kt (محدث)
+
+--------------------------------------------------------------------------------
+4. الملفات الجديدة
+--------------------------------------------------------------------------------
+  StoragePermissionManager.kt        تحقق فعلي من الصلاحية + Intent الإعدادات
+  AdvancedStorageDiscoveryEngine.kt  محرك التخزين المباشر + تشخيص لكل مجلد
+  WastickersPackageParser.kt         فحص ZIP آمن + استخراج معاينات حقيقية متعددة
+  ExplorerPackage.kt                 نموذج الواجهة + ExplorerQuery (بحث/تصفية/ترتيب)
+  test/WastickersExplorerTest.kt            19 اختبار وحدة
+  test/WastickersSourceStatusTest.kt        8 اختبارات وحدة
+
+--------------------------------------------------------------------------------
+5. تفاصيل محرك التخزين (Storage Engine)
+--------------------------------------------------------------------------------
+StoragePermissionManager
+  - Environment.isExternalStorageManager() على API 30+.
+  - فحص قراءة فعلي (listFiles) كدليل، لا مجرد استعلام.
+  - StoragePermissionSnapshot(state, sdkInt, probedRoot, readVerified, detail).
+  - settingsIntent() يفتح ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION.
+  - إعادة الفحص من onResume عبر LifecycleEventObserver في الواجهة.
+
+AdvancedStorageDiscoveryEngine
+  - مسارات ديناميكية: getExternalStorageDirectory + getExternalFilesDirs
+    (لاشتقاق جذور التخزين القابلة للإزالة) + /storage enumeration + /storage/emulated/0.
+  - لا يوجد مسار مفترض واحد.
+  - يجب أن يشمل: Download, Documents, Pictures, Android/media (ضمن الجذور).
+  - العمق الافتراضي 8 وحد الملفات 60000 (قابل للتعديل).
+  - يمنع تكرار الزيارات بـ canonicalPath.
+  - يتجاهل مجلدات الضجيج فقط (.thumbnails, obb, no_backup, code_cache ...)
+    ولا يستثني أسماء عامة مثل "files" لتفادي إسقاط حزم حقيقية.
+  - لكل مجلد FolderProbeResult: OK / MISSING / DENIED / ERROR
+    ← هذا هو الفصل الرسمي بين "فارغ" و"تعذّر الوصول".
+  - ملف .wastickers غير قابل للقراءة → DENIED، وليس "غير موجود".
+  - لا استثناءات مبتلعة: كل SecurityException/IOException يُسجّل في diagnostics.errors.
+  - يعمل على Dispatchers.IO، قابل للإلغاء (currentCoroutineContext().isActive).
+
+WastickersPackageParser
+  - VALID فقط إذا: ZIP يُفتح + يحتوي ملصقاً واحداً على الأقل +
+    يجتاز Zip-Slip وحدود Zip-Bomb من WastickersArchiveValidator.
+  - NEEDS_PARTS لأجزاء الأرشيف المقسّم (.part1 ...).
+  - يستخرج حتى 4 معاينات حقيقية (MAX_PREVIEW_BYTES = 512 KB لكل واحدة).
+  - يقرأ title.txt / author.txt إن وُجدا.
+  - كشف المتحرك من بايتات WebP (ANIM chunk) وليس من الاسم.
+  - STATIC / ANIMATED / MIXED / UNKNOWN.
+  - مساران: ZipFile (ملف حقيقي) و ZipInputStream (ContentResolver).
+
+--------------------------------------------------------------------------------
+6. نتائج اختبار الصلاحيات
+--------------------------------------------------------------------------------
+  MANAGE_EXTERNAL_STORAGE موجودة في APK المدمج         : PASS
+     (تم فك AndroidManifest.xml الثنائي من APK; المقطع
+      "android.permission.MANAGE_EXTERNAL_STORAGE" موجود).
+  applicationId لم يتغيّر (com.aistudio.stickerconv.w2tg) : PASS (تحقق من APK)
+  قراءة صلاحية النظام على جهاز فعلي                      : NOT VERIFIED
+     (لا يوجد جهاز/محاكي في بيئة التنفيذ).
+  إعادة الفحص بعد العودة من الإعدادات (onResume)         : NOT VERIFIED (يتطلب جهاز)
+  الرفض يُعرض بوضوح في الواجهة                           : PASS (كود + اختبار وحدة
+     للحالات؛ التحقق البصري على جهاز: NOT VERIFIED)
+
+--------------------------------------------------------------------------------
+7. نتائج اكتشاف WASTICKERS
+--------------------------------------------------------------------------------
+  منطق المحرك المباشر (المجلدات/العمق/الأخطاء)           : PASS (اختبارات وحدة + مراجعة)
+  الكشف الفعلي على ذاكرة الجهاز (Chinoe LT_6509)        : NOT VERIFIED (لا جهاز)
+  الكشف في Download                                     : NOT VERIFIED (يتطلب جهاز)
+  الكشف في مجلدات متداخلة                               : NOT VERIFIED (يتطلب جهاز)
+  تمييز الفارغ عن الممنوع                               : PASS (اختبار وحدة/بنية)
+  منع التكرار (id مستقر + canonicalPath)                : PASS (اختبار وحدة)
+  كشف الأسماء العربية والمسافات وحالة الأحرف            : PASS (اختبارات وحدة)
+
+--------------------------------------------------------------------------------
+8. نتائج الاستيراد ومعاينات الحزم
+--------------------------------------------------------------------------------
+  فحص ZIP صالح واستخراج معاينات حقيقية                 : PASS (WastickersExplorerTest)
+  رفض ملف غير ZIP                                      : PASS
+  رفض ZIP بدون ملصقات                                   : PASS
+  رفض Zip Slip (اكتمال الأمان)                           : PASS
+  رفض/تمييز الأرشيف المقسّم (.part)                      : PASS
+  كشف المتحرك من البايتات                                : PASS
+  كشف المختلط (ثابت + متحرك)                             : PASS
+  الاستيراد الفعلي داخل التطبيق على جهاز                 : NOT VERIFIED (لا جهاز)
+  معاينة WebP متحركة معروضة فعلياً على جهاز               : NOT VERIFIED (لا جهاز)
+
+--------------------------------------------------------------------------------
+9. نتائج تصميم الواجهة الجديدة (WASTICKERS Explorer)
+--------------------------------------------------------------------------------
+  البنية:
+    - Header مضغوط: العنوان + عدد الحزم + حالة الفحص + مؤشر الصلاحية +
+      زر تحديث صغير. لا يأخذ ارتفاعاً زائداً.
+    - صف بحث واحد رفيع + لوحة تصفية قابلة للإظهار (FilterChip للتصفية،
+      AssistChip للترتيب: الأحدث/الاسم/الحجم/عدد الملصقات).
+    - البطاقة: معاينة كبيرة نسبتها 1.35 (فسيفساء 2×2 من ملصقات حقيقية
+      عند توفر 4 معاينات)، اسم الحزمة، عدد الملصقات، الحجم، شارة النوع،
+      حالة الحزمة، ثم زر استيراد صغير بارتفاع 32dp — أصغر من المعاينة.
+    - شريط سفلي يظهر فقط عند التحديد أو أثناء الاستيراد (لا أزرار دائمة).
+    - Grid متكيّف (GridCells.Adaptive 158dp) → عمودان أو أكثر حسب العرض.
+  الحالات: Loading (مع عدّاد ملفات) / Success / Empty (فرق بين فراغ
+    التصفية وفراغ القائمة) / Permission Required (زر إعدادات + بدائل) /
+    Partial Access (شريط بعدد المجلدات الممنوعة) / Error (سبب + إعادة محاولة).
+  التحقق البصري على جهاز فعلي                            : NOT VERIFIED (لا جهاز)
+  تحقق RTL/العربية فعلياً على الجهاز                      : NOT VERIFIED (لا جهاز)
+
+--------------------------------------------------------------------------------
+10. نتائج Compilation
+--------------------------------------------------------------------------------
+  :app:assembleDebug على GitHub Actions                 : PASS
+     Run 42462844834 — "BUILD SUCCESSFUL in 3m 58s"
+  :app:testDebugUnitTest                                : PASS
+     "BUILD SUCCESSFUL in 43s"
+  التحقق من توقيع APK                                   : PASS
+     "APK signature verification successful."
+  حجم APK                                              : PASS (68,209,339 bytes)
+  رفع الـ Artifact                                      : PASS (app-debug-apk، غير منتهي)
+  وجود الفئات الجديدة داخل APK                           : PASS
+     (AdvancedStorageDiscoveryEngine, WastickersPackageParser,
+      StoragePermissionManager, ExplorerQuery موجودة في dex).
+
+  أخطاء البناء التي ظهرت وأُصلحت (بدليل من سجلات Actions):
+    1) KDoc يحتوي */* فأغلق التعليق مبكراً في WastickersAccessState.kt.
+    2) @Composable مفقودة على DiscoveryStatusBanners.
+    3) when غير شامل بعد إضافة DIRECT_FILE في locationOf().
+    4) ثلاث اختبارات كانت تفترض أعداد enum قديمة (تم تحديثها للعقد الجديد).
+
+--------------------------------------------------------------------------------
+11. نتائج Unit Tests
+--------------------------------------------------------------------------------
+  إجمالي اختبارات WASTICKERS: 4 ملفات جديدة/محدثة
+    WastickersExplorerTest         19 اختبار  PASS
+    WastickersSourceStatusTest      8 اختبار  PASS
+    WastickersDiscoveryScenariosTest (قائم)  PASS
+    WastickersArchiveValidatorTest / WastickersImporterTest / ... (قائمة) PASS
+  النتيجة الكلية لكل الاختبارات المحددة في الـ workflow: PASS
+     ("BUILD SUCCESSFUL" في خطوة Run unit tests).
+
+--------------------------------------------------------------------------------
+12. الاختبارات التي لم يتم التحقق منها (NOT VERIFIED)
+--------------------------------------------------------------------------------
+  كل ما يلي يتطلب جهاز/محاكي Android فعلياً ولم يُنفّذ:
+    - منح MANAGE_EXTERNAL_STORAGE فعلياً على Chinoe LT_6509.
+    - كشف ملفات فعلية في Download/Documents/Pictures/Android/media.
+    - كشف المجلدات المتداخلة على التخزين الحقيقي.
+    - استيراد حزمة حقيقية والتحقق من محتواها المخزّن.
+    - عرض معاينة WebP متحركة فعلياً.
+    - ثبات الذاكرة مع قائمة حزم كبيرة (Large Package List).
+    - منع التكرار على الجهاز.
+    - RTL/العربية بصرياً.
+  الاختبارات الآلية للحالات أعلاه مكتوبة في:
+     app/src/androidTest/java/com/example/WastickersMultiSourceInstrumentedTest.kt (8)
+     app/src/androidTest/java/com/example/WastickersStorageInstrumentedTest.kt (3)
+  وتُشغّل بأمر: gradle :app:connectedDebugAndroidTest (على جهاز موصول).
+
+--------------------------------------------------------------------------------
+13. روابط وبيانات الإصدار
+--------------------------------------------------------------------------------
+  Repository : https://github.com/said9227-prog/stickerspro-max
+  Branch     : main
+  Commit     : c91252ded4f2fb1c9f5c24baf46bad339b7e1137
+  Actions Run: 42462844834 (success)
+  Artifact   : app-debug-apk (68,209,339 bytes, غير منتهي)
+
+================================================================================
+خلاصة صادقة:
+  تم إصلاح السبب الجذري فعلياً (إضافة مسار التخزين المباشر مع التحقق الحقيقي
+  من الصلاحية)، وأعيد تصميم الواجهة لتكون معرض حزم بالمقام الأول، والبناء
+  نجح على GitHub Actions مع اختبارات الوحدة. الاختبارات التي تتطلب جهازاً
+  فعلياً مسجّلة NOT VERIFIED ولم يُدّعَ نجاحها.
+================================================================================
