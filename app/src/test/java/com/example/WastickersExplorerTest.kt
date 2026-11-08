@@ -222,15 +222,18 @@ class WastickersExplorerTest {
     @Test
     fun `sort by size is descending`() {
         val out = ExplorerQuery.apply(sample, "", ExplorerFilter.ALL, ExplorerSort.SIZE)
-        val sizes = out.map { it.sizeBytes }
-        assertEquals(sizes.sortedDescending(), sizes)
+        // NEW packs are pinned first by design.
+        val rest = out.filterNot { it.isNew }.map { it.sizeBytes }
+        assertEquals(rest.sortedDescending(), rest)
     }
 
     @Test
     fun `sort by sticker count is descending`() {
         val out = ExplorerQuery.apply(sample, "", ExplorerFilter.ALL, ExplorerSort.STICKER_COUNT)
-        val counts = out.map { it.stickerCount }
-        assertEquals(counts.sortedDescending(), counts)
+        // NEW packs are pinned first by design; the remaining list is ordered
+        // by sticker count descending.
+        val rest = out.filterNot { it.isNew }.map { it.stickerCount }
+        assertEquals(rest.sortedDescending(), rest)
     }
 
     @Test

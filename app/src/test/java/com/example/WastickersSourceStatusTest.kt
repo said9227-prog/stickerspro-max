@@ -44,24 +44,27 @@ class WastickersSourceStatusTest {
         isDefault = isDefault
     )
 
-    /* 1. Six distinct states exist and map to the right readability. */
+    /* 1. All states exist and ONLY GRANTED_AND_READABLE counts as readable. */
     @Test
-    fun `six access states exist with correct readability`() {
+    fun `every access state maps to the right readability`() {
         val all = WastickersAccessState.values()
-        assertEquals(6, all.size)
+        // 6 original states + MANAGE_EXTERNAL_STORAGE-missing state.
+        assertEquals(7, all.size)
         assertTrue(status(state = WastickersAccessState.GRANTED_AND_READABLE).isReadable)
         assertFalse(status(state = WastickersAccessState.GRANTED_BUT_UNREADABLE).isReadable)
         assertFalse(status(state = WastickersAccessState.TEMPORARY_ACCESS).isReadable)
         assertFalse(status(state = WastickersAccessState.PERMISSION_REVOKED).isReadable)
         assertFalse(status(state = WastickersAccessState.PROVIDER_UNAVAILABLE).isReadable)
         assertFalse(status(state = WastickersAccessState.NOT_SELECTED).isReadable)
+        assertFalse(status(state = WastickersAccessState.NO_PERMISSION_MANAGE).isReadable)
     }
 
-    /* 2. Three source kinds exist; Download is present. */
+    /* 2. All source kinds exist, including Direct File Access + Download. */
     @Test
-    fun `three source kinds exist including download`() {
+    fun `source kinds include direct file and download`() {
         val kinds = WastickersSourceKind.values().map { it.name }
-        assertEquals(3, kinds.size)
+        assertEquals(4, kinds.size)
+        assertTrue(kinds.contains("DIRECT_FILE"))
         assertTrue(kinds.contains("DOWNLOAD"))
         assertTrue(kinds.contains("SAF_TREE"))
         assertTrue(kinds.contains("USER_DOCUMENTS"))
