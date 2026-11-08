@@ -294,6 +294,9 @@ object WastickersFileOps {
                 WastickersSource.MEDIA_STORE -> "MediaStore / $leaf"
                 WastickersSource.SAF_TREE -> leaf
                 WastickersSource.USER_DOCUMENT -> leaf
+                // Direct File Access paths are real filesystem paths, not
+                // content Uris: show the trailing component as-is.
+                WastickersSource.DIRECT_FILE -> leaf
             }
         } catch (_: Exception) {
             uri.takeLast(96)
