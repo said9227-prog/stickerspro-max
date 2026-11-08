@@ -86,28 +86,50 @@ jobs:
           # returning 504 on the hosted runners; the build does not need it.
           develocity-injection-enabled: false
 
-      # Guarantees a usable Gradle 9.3.1 even when the cache action fails.
-      - name: Ensure Gradle 9.3.1 is available
+      # Guarantees a usable Gradle even when setup-gradle fails (it has been
+      # returning 504 from its services). GitHub-hosted Ubuntu runners ship a
+      # Gradle installation under /opt/hostedtoolcache or SDKMAN; that one is
+      # used directly, and a download is only attempted as a last resort.
+      - name: Ensure a Gradle binary is available
         shell: bash
         run: |
           set -e
-          if command -v gradle >/dev/null 2>&1 && gradle --version | grep -q "9\.3\.1"; then
-            echo "Gradle already available: $(gradle --version | grep Gradle)"
+          if command -v gradle >/dev/null 2>&1; then
+            echo "Gradle already on PATH: $(gradle --version | grep '^Gradle')"
             exit 0
           fi
-          echo "Installing Gradle 9.3.1 fallback distribution..."
-          GRADLE_ZIP=/tmp/gradle-9.3.1-bin.zip
-          for attempt in 1 2 3; do
-            if curl -fsSL --retry 3 --retry-delay 5 -o "$GRADLE_ZIP" \
-              https://services.gradle.org/distributions/gradle-9.3.1-bin.zip; then
-              break
+          for candidate in \
+            /opt/hostedtoolcache/gradle/*/x64/bin/gradle \
+            /opt/gradle/*/bin/gradle \
+            /usr/local/lib/gradle/*/bin/gradle \
+            "$HOME/.sdkman/candidates/gradle/current/bin/gradle" \
+            /usr/share/gradle/bin/gradle; do
+            if [ -x "$candidate" ]; then
+              DIR=$(dirname "$candidate")
+              echo "$DIR" >> "$GITHUB_PATH"
+              echo "Using bundled Gradle at $DIR"
+              "$candidate" --version | grep '^Gradle'
+              exit 0
             fi
-            echo "Gradle download attempt $attempt failed"
-            sleep 10
           done
-          unzip -q -o "$GRADLE_ZIP" -d /opt
-          echo "/opt/gradle-9.3.1/bin" >> "$GITHUB_PATH"
-          /opt/gradle-9.3.1/bin/gradle --version
+          echo "No bundled Gradle found; downloading a distribution..."
+          GRADLE_ZIP=/tmp/gradle-bin.zip
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL --retry 2 --retry-delay 5 -o "$GRADLE_ZIP" \
+              https://services.gradle.org/distributions/gradle-9.3.1-bin.zip; then
+              mkdir -p /opt/gradle-dl
+              unzip -q -o "$GRADLE_ZIP" -d /opt/gradle-dl
+              DIR=$(find /opt/gradle-dl -maxdepth 2 -name gradle -type f | head -1)
+              DIR=$(dirname "$DIR")
+              echo "$DIR" >> "$GITHUB_PATH"
+              echo "Downloaded Gradle at $DIR"
+              exit 0
+            fi
+            echo "Download attempt $attempt failed; retrying..."
+            sleep 15
+          done
+          echo "ERROR: could not obtain a Gradle distribution."
+          exit 1
 
       # ============================================================
       # 5. Verify Gradle wrapper
@@ -164,6 +186,11 @@ jobs:
         run: |
           set -e
 
+          # Retried once for transient mirror 504s; a real test
+          # failure fails every attempt and is reported.
+          attempt=1
+          max_attempts=2
+          until \
           gradle :app:testDebugUnitTest \
             --tests com.example.WhatsAppStickerValidatorTest \
             --tests com.example.WhatsAppStickerPackProviderTest \
@@ -179,7 +206,15 @@ jobs:
             --tests com.example.WastickersSourceStatusTest \
             --tests com.example.WastickersExplorerTest \
             --stacktrace \
-            --no-daemon
+            --no-daemon; do
+            status=$?
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              exit $status
+            fi
+            attempt=$((attempt + 1))
+            echo "Retrying unit tests (attempt $attempt)..."
+            sleep 20
+          done
 
       # ============================================================
       # 7. Verify APK exists
